@@ -1,0 +1,524 @@
+
+R version 3.4.2 (2017-09-28) -- "Short Summer"
+Copyright (C) 2017 The R Foundation for Statistical Computing
+Platform: x86_64-apple-darwin15.6.0 (64-bit)
+
+R is free software and comes with ABSOLUTELY NO WARRANTY.
+You are welcome to redistribute it under certain conditions.
+Type 'license()' or 'licence()' for distribution details.
+
+  Natural language support but running in an English locale
+
+R is a collaborative project with many contributors.
+Type 'contributors()' for more information and
+'citation()' on how to cite R or R packages in publications.
+
+Type 'demo()' for some demos, 'help()' for on-line help, or
+'help.start()' for an HTML browser interface to help.
+Type 'q()' to quit R.
+
+[R.app GUI 1.70 (7434) x86_64-apple-darwin15.6.0]
+
+[Workspace restored from /Users/akshaygurao/.RData]
+> 
+> # Preliminary data processing
+> library("randomForest")
+randomForest 4.6-12
+Type rfNews() to see new features/changes/bug fixes.
+Warning message:
+In as.POSIXlt.POSIXct(Sys.time()) :
+  unknown timezone 'zone/tz/2017c.1.0/zoneinfo/America/New_York'
+> library("party")
+Loading required package: grid
+Loading required package: mvtnorm
+Loading required package: modeltools
+Loading required package: stats4
+Loading required package: strucchange
+Loading required package: zoo
+
+Attaching package: ‘zoo’
+
+The following objects are masked from ‘package:base’:
+
+    as.Date, as.Date.numeric
+
+Loading required package: sandwich
+> library("dplyr")
+
+Attaching package: ‘dplyr’
+
+The following object is masked from ‘package:randomForest’:
+
+    combine
+
+The following objects are masked from ‘package:stats’:
+
+    filter, lag
+
+The following objects are masked from ‘package:base’:
+
+    intersect, setdiff, setequal, union
+
+> library("tidyr")
+> library("sqldf")
+Loading required package: gsubfn
+Loading required package: proto
+Could not load tcltk.  Will use slower R code instead.
+Loading required package: RSQLite
+Warning message:
+In doTryCatch(return(expr), name, parentenv, handler) :
+  unable to load shared object '/Library/Frameworks/R.framework/Resources/modules//R_X11.so':
+  dlopen(/Library/Frameworks/R.framework/Resources/modules//R_X11.so, 6): Library not loaded: /opt/X11/lib/libSM.6.dylib
+  Referenced from: /Library/Frameworks/R.framework/Resources/modules//R_X11.so
+  Reason: image not found
+> library("caret")
+Loading required package: lattice
+Loading required package: ggplot2
+
+Attaching package: ‘ggplot2’
+
+The following object is masked from ‘package:randomForest’:
+
+    margin
+
+> library("glmnet")
+Loading required package: Matrix
+
+Attaching package: ‘Matrix’
+
+The following object is masked from ‘package:tidyr’:
+
+    expand
+
+Loading required package: foreach
+foreach: simple, scalable parallel programming from Revolution Analytics
+Use Revolution R for scalability, fault tolerance and more.
+http://www.revolutionanalytics.com
+Loaded glmnet 2.0-13
+
+> library("car")
+
+Attaching package: ‘car’
+
+The following object is masked from ‘package:dplyr’:
+
+    recode
+
+Warning message:
+package ‘car’ was built under R version 3.4.3 
+> library("ROCR")
+Loading required package: gplots
+
+Attaching package: ‘gplots’
+
+The following object is masked from ‘package:stats’:
+
+    lowess
+
+> library("gbm")
+Loading required package: survival
+
+Attaching package: ‘survival’
+
+The following object is masked from ‘package:caret’:
+
+    cluster
+
+Loading required package: splines
+Loading required package: parallel
+Loaded gbm 2.1.3
+> 
+> #read csv files from the local disk
+> h1b_data <- read.csv("/Users/akshaygurao/Downloads/h1b_kaggle.csv", header=T)
+> 
+> #filter the data that is required, here we take the case status we need i.e certified and denied
+> data_filtered<-filter(h1b_data,CASE_STATUS %in% c('CERTIFIED','DENIED'))
+> data_filtered<-data_filtered[complete.cases(data_filtered),]
+> h1b.rf<-data_filtered
+> h1b.rf[,c(1,3,5,8,10,11)]<-NULL
+> 
+> ##h1b.rf$SOC_NAME<-tolower(h1b.rf$SOC_NAME)
+> h1b.rf<-separate(data = h1b.rf, col = WORKSITE, into = c("CITY", "STATE"), sep = ",")
+> 
+> ## Data Cleaning - Selecting the major occupations
+> h1b.rf$occ<-NA
+> h1b.rf$occ[grep("engineer",h1b.rf$SOC_NAME, ignore.case = T)]<-"ENGINEER"
+> h1b.rf$occ[grep("manager",h1b.rf$SOC_NAME, ignore.case = T)]<-"MANAGER"
+> h1b.rf$occ[grep("technician",h1b.rf$SOC_NAME, ignore.case = T)]<-"TECHNICIAN"
+> h1b.rf$occ[grep("teacher",h1b.rf$SOC_NAME, ignore.case = T)]<-"TEACHER"
+> h1b.rf$occ[grep("executive",h1b.rf$SOC_NAME, ignore.case = T)]<-"EXECUTIVE"
+> h1b.rf$occ[grep("accountant",h1b.rf$SOC_NAME, ignore.case = T)]<-"ACCOUNTANT"
+> 
+> 
+> h1b.rf$SOC_NAME<-NULL
+> h1b.rf$CITY<- NULL
+> 
+> ## removing states with low count
+> a<-sqldf("select count(*) cc, STATE from 'h1b.rf' group by STATE")
+> b<-sqldf("select * from a where cc>2000 AND STATE <> ' NA'")
+> h1b.rf$STATE<-ifelse(h1b.rf$STATE %in% b$STATE,h1b.rf$STATE,NA)
+> 
+> ##converting the dependent variable to binary
+> h1b.rf$CASE_STATUS<-ifelse(h1b.rf$CASE_STATUS %in% c("CERTIFIED"),"1","0")
+> 
+> ##selecting only complete cases
+> h1b.rf<-h1b.rf[complete.cases(h1b.rf),]
+> 
+> ##converting categorical variables into factors
+> h1b.rf[,c(-3)]<- lapply(h1b.rf[,c(-3)], as.factor)
+> 
+> 
+> h1b.glm<-h1b.rf
+> 
+> ##converting categorical variables to dummy variables for logistic regression
+> dmy<-dummyVars("~.",data=h1b.glm)
+> 
+> trsf<-data.frame(predict(dmy,newdata=h1b.glm))
+> data_with_dum<-cbind(h1b.glm[1],trsf[,c(-1,-2)])
+> 
+> colnames(data_with_dum)
+ [1] "CASE_STATUS"                 "FULL_TIME_POSITION.N"       
+ [3] "FULL_TIME_POSITION.Y"        "PREVAILING_WAGE"            
+ [5] "STATE..ALABAMA"              "STATE..ARIZONA"             
+ [7] "STATE..ARKANSAS"             "STATE..CALIFORNIA"          
+ [9] "STATE..COLORADO"             "STATE..CONNECTICUT"         
+[11] "STATE..DELAWARE"             "STATE..DISTRICT.OF.COLUMBIA"
+[13] "STATE..FLORIDA"              "STATE..GEORGIA"             
+[15] "STATE..HAWAII"               "STATE..IDAHO"               
+[17] "STATE..ILLINOIS"             "STATE..INDIANA"             
+[19] "STATE..IOWA"                 "STATE..KANSAS"              
+[21] "STATE..KENTUCKY"             "STATE..LOUISIANA"           
+[23] "STATE..MAINE"                "STATE..MARYLAND"            
+[25] "STATE..MASSACHUSETTS"        "STATE..MICHIGAN"            
+[27] "STATE..MINNESOTA"            "STATE..MISSISSIPPI"         
+[29] "STATE..MISSOURI"             "STATE..NEBRASKA"            
+[31] "STATE..NEVADA"               "STATE..NEW.HAMPSHIRE"       
+[33] "STATE..NEW.JERSEY"           "STATE..NEW.MEXICO"          
+[35] "STATE..NEW.YORK"             "STATE..NORTH.CAROLINA"      
+[37] "STATE..NORTH.DAKOTA"         "STATE..OHIO"                
+[39] "STATE..OKLAHOMA"             "STATE..OREGON"              
+[41] "STATE..PENNSYLVANIA"         "STATE..RHODE.ISLAND"        
+[43] "STATE..SOUTH.CAROLINA"       "STATE..TENNESSEE"           
+[45] "STATE..TEXAS"                "STATE..UTAH"                
+[47] "STATE..VIRGINIA"             "STATE..WASHINGTON"          
+[49] "STATE..WISCONSIN"            "occ.ACCOUNTANT"             
+[51] "occ.ENGINEER"                "occ.EXECUTIVE"              
+[53] "occ.MANAGER"                 "occ.TEACHER"                
+[55] "occ.TECHNICIAN"             
+> #n-1 dummy variables for n categories
+> data_final<-data_with_dum[,c(-3,-37,-43)]
+> 
+> ##fitting the model on the complete dataset
+> h1bglm.fit <-glm(CASE_STATUS~., family=binomial(link = logit), data = data_final)
+> summary(h1bglm.fit)
+
+Call:
+glm(formula = CASE_STATUS ~ ., family = binomial(link = logit), 
+    data = data_final)
+
+Deviance Residuals: 
+    Min       1Q   Median       3Q      Max  
+-2.7407   0.2821   0.3002   0.3685   4.0357  
+
+Coefficients: (1 not defined because of singularities)
+                              Estimate Std. Error z value Pr(>|z|)    
+(Intercept)                  2.411e+00  8.349e-02  28.880  < 2e-16 ***
+FULL_TIME_POSITION.N        -4.734e-02  1.952e-02  -2.425 0.015324 *  
+PREVAILING_WAGE             -5.969e-08  3.363e-09 -17.749  < 2e-16 ***
+STATE..ALABAMA              -1.384e-01  1.115e-01  -1.242 0.214413    
+STATE..ARIZONA               2.473e-02  9.186e-02   0.269 0.787782    
+STATE..ARKANSAS              5.796e-02  1.444e-01   0.401 0.688173    
+STATE..CALIFORNIA            1.508e-01  7.793e-02   1.935 0.053012 .  
+STATE..COLORADO             -3.220e-02  9.664e-02  -0.333 0.738957    
+STATE..CONNECTICUT           4.145e-01  9.958e-02   4.162 3.15e-05 ***
+STATE..DELAWARE              4.132e-02  1.537e-01   0.269 0.788064    
+STATE..DISTRICT.OF.COLUMBIA -2.721e-01  9.529e-02  -2.856 0.004291 ** 
+STATE..FLORIDA              -4.073e-01  8.062e-02  -5.052 4.36e-07 ***
+STATE..GEORGIA               5.403e-02  8.587e-02   0.629 0.529246    
+STATE..HAWAII               -9.033e-01  1.206e-01  -7.489 6.92e-14 ***
+STATE..IDAHO                -1.635e-01  1.357e-01  -1.205 0.228093    
+STATE..ILLINOIS              3.546e-01  8.357e-02   4.243 2.21e-05 ***
+STATE..INDIANA               5.647e-01  1.026e-01   5.507 3.66e-08 ***
+STATE..IOWA                  4.850e-01  1.379e-01   3.517 0.000436 ***
+STATE..KANSAS                9.513e-02  1.186e-01   0.802 0.422318    
+STATE..KENTUCKY              2.908e-01  1.333e-01   2.181 0.029195 *  
+STATE..LOUISIANA            -1.090e-01  1.059e-01  -1.030 0.303148    
+STATE..MAINE                 1.277e-01  2.328e-01   0.549 0.583174    
+STATE..MARYLAND             -5.612e-02  8.820e-02  -0.636 0.524622    
+STATE..MASSACHUSETTS         1.983e-01  8.427e-02   2.353 0.018630 *  
+STATE..MICHIGAN              4.318e-01  8.607e-02   5.017 5.25e-07 ***
+STATE..MINNESOTA             5.038e-01  1.049e-01   4.802 1.57e-06 ***
+STATE..MISSISSIPPI          -5.057e-01  1.437e-01  -3.519 0.000432 ***
+STATE..MISSOURI              2.551e-01  1.082e-01   2.357 0.018447 *  
+STATE..NEBRASKA              2.287e-02  1.538e-01   0.149 0.881769    
+STATE..NEVADA               -6.633e-01  1.051e-01  -6.309 2.82e-10 ***
+STATE..NEW.HAMPSHIRE         7.085e-01  1.955e-01   3.624 0.000290 ***
+STATE..NEW.JERSEY            2.347e-01  8.368e-02   2.804 0.005045 ** 
+STATE..NEW.MEXICO           -1.804e-01  1.367e-01  -1.320 0.186812    
+STATE..NEW.YORK              8.399e-02  7.913e-02   1.062 0.288457    
+STATE..NORTH.CAROLINA        2.472e-01  9.231e-02   2.678 0.007401 ** 
+STATE..OHIO                  4.434e-01  9.226e-02   4.806 1.54e-06 ***
+STATE..OKLAHOMA              5.544e-02  1.150e-01   0.482 0.629824    
+STATE..OREGON                5.763e-01  1.081e-01   5.332 9.70e-08 ***
+STATE..PENNSYLVANIA          3.625e-01  8.803e-02   4.118 3.83e-05 ***
+STATE..RHODE.ISLAND          1.661e-01  1.573e-01   1.056 0.290775    
+STATE..TENNESSEE             3.626e-02  1.027e-01   0.353 0.723977    
+STATE..TEXAS                 1.347e-01  7.884e-02   1.708 0.087581 .  
+STATE..UTAH                 -2.555e-01  1.063e-01  -2.404 0.016214 *  
+STATE..VIRGINIA             -5.938e-02  8.555e-02  -0.694 0.487655    
+STATE..WASHINGTON            6.752e-01  8.946e-02   7.548 4.43e-14 ***
+STATE..WISCONSIN             3.834e-01  1.072e-01   3.575 0.000350 ***
+occ.ACCOUNTANT               1.132e-01  3.832e-02   2.954 0.003136 ** 
+occ.ENGINEER                 6.155e-01  3.567e-02  17.257  < 2e-16 ***
+occ.EXECUTIVE               -8.411e-01  5.547e-02 -15.163  < 2e-16 ***
+occ.MANAGER                  2.984e-02  3.607e-02   0.827 0.408056    
+occ.TEACHER                  4.125e-01  3.807e-02  10.835  < 2e-16 ***
+occ.TECHNICIAN                      NA         NA      NA       NA    
+---
+Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+
+(Dispersion parameter for binomial family taken to be 1)
+
+    Null deviance: 196269  on 466464  degrees of freedom
+Residual deviance: 190580  on 466414  degrees of freedom
+AIC: 190682
+
+Number of Fisher Scoring iterations: 6
+
+> 
+> ##finding and removing variables with high VIF
+> viff<-vif(h1bglm.fit)
+Error in vif.default(h1bglm.fit) : 
+  there are aliased coefficients in the model
+> which(as.numeric(viff)>8,arr.ind=T)
+[1]  5 23 31
+> data_final<-data_final[,c(-5,-23,-31)]
+> 
+> ##splitting the dataset into training and testing set
+> set.seed(32388)
+> 
+> inTrain <- createDataPartition(y = data_final$CASE_STATUS,p = .79, list = FALSE)
+> training <- data_final[inTrain,]
+> testing <- data_final[-inTrain,]
+> 
+> 
+> ##fitting the model on the training dataset
+> h1bglm.train.fit <-glm(CASE_STATUS~., family=binomial(link = logit), data = training)
+> summary(h1bglm.train.fit)
+
+Call:
+glm(formula = CASE_STATUS ~ ., family = binomial(link = logit), 
+    data = training)
+
+Deviance Residuals: 
+    Min       1Q   Median       3Q      Max  
+-2.7348   0.2809   0.3003   0.3712   4.2023  
+
+Coefficients: (1 not defined because of singularities)
+                              Estimate Std. Error z value Pr(>|z|)    
+(Intercept)                  2.398e+00  4.961e-02  48.340  < 2e-16 ***
+FULL_TIME_POSITION.N        -4.358e-02  2.198e-02  -1.983 0.047416 *  
+PREVAILING_WAGE             -6.349e-08  4.408e-09 -14.403  < 2e-16 ***
+STATE..ALABAMA              -2.259e-01  9.375e-02  -2.410 0.015943 *  
+STATE..ARKANSAS              9.800e-02  1.455e-01   0.674 0.500477    
+STATE..CALIFORNIA            1.362e-01  3.762e-02   3.622 0.000292 ***
+STATE..COLORADO             -7.635e-02  7.418e-02  -1.029 0.303367    
+STATE..CONNECTICUT           4.570e-01  8.138e-02   5.616 1.95e-08 ***
+STATE..DELAWARE              2.885e-02  1.528e-01   0.189 0.850237    
+STATE..DISTRICT.OF.COLUMBIA -3.105e-01  7.194e-02  -4.316 1.59e-05 ***
+STATE..FLORIDA              -4.364e-01  4.418e-02  -9.877  < 2e-16 ***
+STATE..GEORGIA               3.353e-02  5.545e-02   0.605 0.545341    
+STATE..HAWAII               -8.785e-01  1.102e-01  -7.969 1.60e-15 ***
+STATE..IDAHO                -2.247e-01  1.300e-01  -1.729 0.083890 .  
+STATE..ILLINOIS              2.960e-01  5.016e-02   5.901 3.61e-09 ***
+STATE..INDIANA               4.703e-01  8.166e-02   5.759 8.49e-09 ***
+STATE..IOWA                  4.877e-01  1.359e-01   3.589 0.000332 ***
+STATE..KANSAS                1.105e-02  1.044e-01   0.106 0.915661    
+STATE..KENTUCKY              2.847e-01  1.279e-01   2.226 0.025984 *  
+STATE..LOUISIANA            -1.260e-01  8.942e-02  -1.409 0.158717    
+STATE..MAINE                 9.857e-02  2.525e-01   0.390 0.696319    
+STATE..MASSACHUSETTS         1.805e-01  5.204e-02   3.468 0.000524 ***
+STATE..MICHIGAN              4.038e-01  5.575e-02   7.244 4.36e-13 ***
+STATE..MINNESOTA             4.772e-01  8.701e-02   5.484 4.15e-08 ***
+STATE..MISSISSIPPI          -4.460e-01  1.443e-01  -3.091 0.001995 ** 
+STATE..MISSOURI              2.544e-01  9.284e-02   2.740 0.006140 ** 
+STATE..NEBRASKA             -3.972e-04  1.514e-01  -0.003 0.997907    
+STATE..NEVADA               -6.919e-01  8.786e-02  -7.875 3.41e-15 ***
+STATE..NEW.JERSEY            2.296e-01  5.108e-02   4.496 6.93e-06 ***
+STATE..NEW.MEXICO           -2.345e-01  1.305e-01  -1.796 0.072432 .  
+STATE..NEW.YORK              6.559e-02  4.058e-02   1.616 0.106046    
+STATE..NORTH.CAROLINA        2.164e-01  6.699e-02   3.231 0.001235 ** 
+STATE..OHIO                  4.547e-01  6.775e-02   6.711 1.94e-11 ***
+STATE..OKLAHOMA              7.521e-02  1.048e-01   0.718 0.472847    
+STATE..OREGON                5.214e-01  9.115e-02   5.720 1.06e-08 ***
+STATE..PENNSYLVANIA          3.641e-01  5.982e-02   6.086 1.16e-09 ***
+STATE..RHODE.ISLAND          2.106e-01  1.602e-01   1.315 0.188555    
+STATE..TENNESSEE             1.677e-03  8.360e-02   0.020 0.983996    
+STATE..TEXAS                 1.036e-01  3.991e-02   2.595 0.009450 ** 
+STATE..UTAH                 -3.035e-01  8.870e-02  -3.422 0.000622 ***
+STATE..VIRGINIA             -7.062e-02  5.504e-02  -1.283 0.199503    
+STATE..WASHINGTON            6.709e-01  6.254e-02  10.726  < 2e-16 ***
+STATE..WISCONSIN             3.454e-01  9.037e-02   3.823 0.000132 ***
+occ.ACCOUNTANT               1.421e-01  4.273e-02   3.326 0.000879 ***
+occ.ENGINEER                 6.484e-01  3.968e-02  16.340  < 2e-16 ***
+occ.EXECUTIVE               -7.853e-01  6.243e-02 -12.578  < 2e-16 ***
+occ.MANAGER                  6.632e-02  4.017e-02   1.651 0.098719 .  
+occ.TEACHER                  4.534e-01  4.247e-02  10.675  < 2e-16 ***
+occ.TECHNICIAN                      NA         NA      NA       NA    
+---
+Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+
+(Dispersion parameter for binomial family taken to be 1)
+
+    Null deviance: 155055  on 368507  degrees of freedom
+Residual deviance: 150560  on 368460  degrees of freedom
+AIC: 150656
+
+Number of Fisher Scoring iterations: 7
+
+> 
+> coef(h1bglm.fit)
+                (Intercept)        FULL_TIME_POSITION.N 
+               2.411016e+00               -4.733929e-02 
+            PREVAILING_WAGE              STATE..ALABAMA 
+              -5.969155e-08               -1.383961e-01 
+             STATE..ARIZONA             STATE..ARKANSAS 
+               2.472672e-02                5.795624e-02 
+          STATE..CALIFORNIA             STATE..COLORADO 
+               1.507794e-01               -3.220319e-02 
+         STATE..CONNECTICUT             STATE..DELAWARE 
+               4.144861e-01                4.132197e-02 
+STATE..DISTRICT.OF.COLUMBIA              STATE..FLORIDA 
+              -2.721377e-01               -4.073367e-01 
+             STATE..GEORGIA               STATE..HAWAII 
+               5.402795e-02               -9.033318e-01 
+               STATE..IDAHO             STATE..ILLINOIS 
+              -1.635373e-01                3.545701e-01 
+             STATE..INDIANA                 STATE..IOWA 
+               5.647100e-01                4.849976e-01 
+              STATE..KANSAS             STATE..KENTUCKY 
+               9.512609e-02                2.907944e-01 
+           STATE..LOUISIANA                STATE..MAINE 
+              -1.090067e-01                1.277342e-01 
+            STATE..MARYLAND        STATE..MASSACHUSETTS 
+              -5.611774e-02                1.982844e-01 
+            STATE..MICHIGAN            STATE..MINNESOTA 
+               4.318287e-01                5.038248e-01 
+         STATE..MISSISSIPPI             STATE..MISSOURI 
+              -5.057460e-01                2.550752e-01 
+            STATE..NEBRASKA               STATE..NEVADA 
+               2.286835e-02               -6.633474e-01 
+       STATE..NEW.HAMPSHIRE           STATE..NEW.JERSEY 
+               7.085085e-01                2.346541e-01 
+          STATE..NEW.MEXICO             STATE..NEW.YORK 
+              -1.804365e-01                8.399238e-02 
+      STATE..NORTH.CAROLINA                 STATE..OHIO 
+               2.472340e-01                4.433980e-01 
+            STATE..OKLAHOMA               STATE..OREGON 
+               5.543918e-02                5.763162e-01 
+        STATE..PENNSYLVANIA         STATE..RHODE.ISLAND 
+               3.624886e-01                1.661456e-01 
+           STATE..TENNESSEE                STATE..TEXAS 
+               3.626500e-02                1.346818e-01 
+                STATE..UTAH             STATE..VIRGINIA 
+              -2.555231e-01               -5.937653e-02 
+          STATE..WASHINGTON            STATE..WISCONSIN 
+               6.752210e-01                3.834205e-01 
+             occ.ACCOUNTANT                occ.ENGINEER 
+               1.131887e-01                6.155267e-01 
+              occ.EXECUTIVE                 occ.MANAGER 
+              -8.411192e-01                2.983840e-02 
+                occ.TEACHER              occ.TECHNICIAN 
+               4.124860e-01                          NA 
+> 
+> ###Finding Prdicitons on Testing set
+> prediction<-predict(h1bglm.train.fit,newdata=testing,type="response")
+Warning message:
+In predict.lm(object, newdata, se.fit, scale = 1, type = ifelse(type ==  :
+  prediction from a rank-deficient fit may be misleading
+> aa<-as.data.frame(prediction)
+> 
+> ##cutoff for prediction
+> prediction[prediction<0.97]<-0
+> prediction[prediction>=0.97]<-1
+> 
+> ##confusion matrix
+> confusionMatrix(prediction,testing$CASE_STATUS)
+Confusion Matrix and Statistics
+
+          Reference
+Prediction     0     1
+         0  5134 86863
+         1   164  5796
+                                          
+               Accuracy : 0.1116          
+                 95% CI : (0.1096, 0.1136)
+    No Information Rate : 0.9459          
+    P-Value [Acc > NIR] : 1               
+                                          
+                  Kappa : 0.0036          
+ Mcnemar's Test P-Value : <2e-16          
+                                          
+            Sensitivity : 0.96904         
+            Specificity : 0.06255         
+         Pos Pred Value : 0.05581         
+         Neg Pred Value : 0.97248         
+             Prevalence : 0.05408         
+         Detection Rate : 0.05241         
+   Detection Prevalence : 0.93916         
+      Balanced Accuracy : 0.51580         
+                                          
+       'Positive' Class : 0               
+                                          
+> 
+> pred <- prediction( prediction, testing$CASE_STATUS)
+> perf <- performance(pred,"tpr","fpr")
+> plot(perf)
+> 
+> ##splitting data into training and test set
+> set.seed(32388)
+> inTrain11 <- createDataPartition(y = h1b.rf$CASE_STATUS,p = .79, list = FALSE)
+> training1 <- h1b.rf[inTrain11,]
+> testing1 <- h1b.rf[-inTrain11,]
+> 
+> 
+> #####Running ctree on training set
+> ctree1<-ctree(CASE_STATUS~.,data=training1)
+> #####Predicitng on testing set
+> prediction1<-predict(ctree1,newdata=testing1)
+> ###To check the confusion matrix
+> confusionMatrix(prediction1,testing1$CASE_STATUS)
+Confusion Matrix and Statistics
+
+          Reference
+Prediction     0     1
+         0   106    10
+         1  5192 92649
+                                          
+               Accuracy : 0.9469          
+                 95% CI : (0.9455, 0.9483)
+    No Information Rate : 0.9459          
+    P-Value [Acc > NIR] : 0.08838         
+                                          
+                  Kappa : 0.0369          
+ Mcnemar's Test P-Value : < 2e-16         
+                                          
+            Sensitivity : 0.020008        
+            Specificity : 0.999892        
+         Pos Pred Value : 0.913793        
+         Neg Pred Value : 0.946934        
+             Prevalence : 0.054085        
+         Detection Rate : 0.001082        
+   Detection Prevalence : 0.001184        
+      Balanced Accuracy : 0.509950        
+                                          
+       'Positive' Class : 0               
+                                          
+> 
+> probabilities <- 1- unlist(treeresponse(ctree1,newdata=testing1), use.names=F)[seq(1,nrow(testing1)*2,2)]
+> ################ROC CURVE
+> pred1 <- prediction( probabilities, testing1$CASE_STATUS)
+> perf1 <- performance(pred1,"tpr","fpr")
+> plot(perf1)
+> 
+> 
